@@ -125,6 +125,7 @@ exports.getQuestions = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+//delete room
 exports.deleteRoom = async (req, res) => {
   try {
     const { roomId } = req.params;
@@ -137,6 +138,7 @@ exports.deleteRoom = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+//delete question
 exports.deleteQuestion = async (req, res) => {
   try {
     const { questionId } = req.params;
