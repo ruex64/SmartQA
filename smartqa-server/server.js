@@ -3,6 +3,9 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose')
 const roomRoutes = require('./src/routes/roomRoutes')
+const session = require("express-session");
+const passport = require("passport");
+require("./src/config/passport")(passport);
 
 
 const app = express();
@@ -13,6 +16,11 @@ mongoose.connect(process.env.MONGODB_URL)
 
 
 //middlewares
+app.use(session({ secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false }));
+app.use(passport.initialize());
+app.use(passport.session());
+
+
 app.use(express.json());
 
 const corsConfig = {
