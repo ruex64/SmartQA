@@ -1,0 +1,17 @@
+# Root ignores
+.env
+.vscode
+.DS_Store
+
+# Ignore frontend build & modules
+smartqa-react-client/node_modules/
+smartqa-react-client/dist/
+smartqa-react-client/.env
+
+# Ignore backend modules
+smartqa-server/node_modules/
+smartqa-server/.env
+
+# Optional: OS-specific junk
+Thumbs.db
+*.log
