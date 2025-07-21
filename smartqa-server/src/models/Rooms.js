@@ -1,8 +1,24 @@
-const mongoose = require("mongoose");
+const mongoose = require('mongoose');
 
-const roomSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // reference to User
-}, { timestamps: true });
+const roomsSchema = new mongoose.Schema({
+    roomCode: { type: String, required: true, unique: true },
+    createdBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: true,
+        ref: 'User' // Creates a reference to the User model
+    },
+    isActive: { type: Boolean, default: true },
+    createdAt: { type: Date, default: Date.now }
+});
 
-module.exports = mongoose.model("Room", roomSchema);
+// Populate the 'createdBy' field with user's name when finding a room
+roomsSchema.pre(/^find/, function(next) {
+    this.populate({
+        path: 'createdBy',
+        select: 'name' // Select only the name field from the User document
+    });
+    next();
+});
+
+
+module.exports = mongoose.model("Rooms", roomsSchema);

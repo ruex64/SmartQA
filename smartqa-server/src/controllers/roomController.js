@@ -1,152 +1,130 @@
-// const { request, response } = require("express");
+// Smartqa-server/src/controllers/roomController.js
 
-// const roomController = {
+const Questions = require("../models/Questions");
+const Rooms = require("../models/Rooms");
+const { callGemini } = require("../services/geminiService");
 
-// // post /room/    
+const roomController = {
 
-//     createRoom: async (request, response) => {
-//         try {
-//             const { createdBy } = request.body;
-//             const code = Math.random.toString(36).substring(2, 8).toUpperCase();
-//             const room = await Rooms.create({
-//                 roomCode: code,
-//                 createdBy: createdBy
-//             });
-//             response.json(room);
+    // ... (createRoom, getByRoomCode, getQuestions, deleteQuestion are unchanged)
+    createRoom: async (request, response) => {
+        try {
+            const createdBy = request.user._id;
+            const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+            const room = await Rooms.create({ roomCode: code, createdBy: createdBy });
+            const populatedRoom = await Rooms.findById(room._id);
+            response.status(201).json(populatedRoom);
+        } catch (error) {
+            console.log(error);
+            response.status(500).json({ message: 'Internal server error' });
+        }
+    },
+    getByRoomCode: async (request, response) => {
+        try {
+            const code = request.params.code;
+            const room = await Rooms.findOne({ roomCode: code });
+            if (!room) {
+                return response.status(404).json({ message: 'Invalid room code' });
+            }
+            response.json(room);
+        } catch (error) {
+            console.log(error);
+            response.status(500).json({ message: 'Internal server error' });
+        }
+    },
+    getQuestions: async (request, response) => {
+        try {
+            const code = request.params.code;
+            const questions = await Questions.find({ roomCode: code }).sort({ createdAt: -1 });
+            response.json(questions);
+        } catch (error) {
+            console.log(error);
+            response.status(500).json({ message: 'Internal server error' });
+        }
+    },
+    deleteQuestion: async (req, res) => {
+        try {
+            const { questionId } = req.params;
+            const question = await Questions.findById(questionId);
+            if (!question) {
+                return res.status(404).json({ message: 'Question not found in database' });
+            }
+            const room = await Rooms.findOne({ roomCode: question.roomCode });
+            if (!room.createdBy || room.createdBy._id.toString() !== req.user._id.toString()) {
+                return res.status(403).json({ message: 'User not authorized to delete questions in this room' });
+            }
+            const roomCode = question.roomCode;
+            await question.deleteOne();
+            const io = req.app.get("io");
+            io.to(roomCode).emit("question-deleted", questionId);
+            res.status(200).json({ message: 'Question Deleted', questionId: questionId });
+        } catch (error) {
+            console.log(error);
+            res.status(500).json({ message: 'Internal Server Error' });
+        }
+    },
 
-//         } catch (error) {
-//             console.log(error);
-//             response.status(500).json({ message: 'Internal Server Error' });
-//         }
-//     },
+    // POST /room/:code/question
+    createQuestion: async (request, response) => {
+        try {
+            const { content } = request.body;
+            const { code } = request.params;
+            const room = await Rooms.findOne({ roomCode: code });
 
-// //get /room/:code
-    
-//     getByRoomCode: async (request, response) => {
-//         try {
-//             const code = request.params.code;
+            // --- START OF ASSIGNMENT LOGIC ---
+            // Authorization Check: Prevent room creator from posting questions
+            if (room.createdBy._id.toString() === request.user._id.toString()) {
+                return response.status(403).json({ message: "Room creators cannot post questions." });
+            }
+            // --- END OF ASSIGNMENT LOGIC ---
 
-//             const room = await Rooms.findOne({ roomCode: code });
-//             if (!room) {
-//                 return response.status(404).json({ message: "Invalid room code" });
-//             }
-//             response.json(room);
+            const question = await Questions.create({
+                roomCode: code,
+                content: content,
+                createdBy: request.user.name
+            });
+            const io = request.app.get("io");
+            io.to(code).emit("new-question", question);
 
-//         } catch (error) {
-//             console.log(error);
-//         }
-//     },
+            response.status(201).json(question);
+        } catch (error) {
+            console.log(error);
+            response.status(500).json({ message: 'Internal server error' });
+        }
+    },
 
-//     //post /room/:code/question
-//     createQuestion: async (request, response) => {
-//         try {
-//             const { content, createdBy } = request.body;
-//             const { code } = request.params;
-//             const question = await Questions.create({
-//                 roomCode: code,
-//                 content: content,
-//                 createdBy: createdBy
-//             });
-//             response.json(question);
+    // POST /room/:code/summarize
+    generateTopQuestions: async (request, response) => {
+        try {
+            const code = request.params.code;
+            const room = await Rooms.findOne({ roomCode: code });
 
-//         } catch (error) {
-//             console.log(error);
-//             response.status(500).json({ message: "Internal server error" });
-//         }
-//     },
+            // --- START OF ASSIGNMENT LOGIC ---
+            // Authorization Check: Only the room creator can summarize
+            if (room.createdBy._id.toString() !== request.user._id.toString()) {
+                return response.status(403).json({ message: "Only the room creator can summarize questions." });
+            }
+            
+            const questions = await Questions.find({ roomCode: code });
+            if (questions.length === 0) {
+                return response.status(400).json({ message: "No questions to summarize." });
+            }
 
-//     //get /room/:code/question
-//     getQuestions: async (request, response) => {
-//         try {
-//             const code = request.params.code;
-//             const questions = await Questions.find({ roomCode: code }).sort({ createdAt: -1 });
-//             response.json(questions);
+            const topQuestions = await callGemini(questions);
 
-//         } catch (error) {
-//             console.log(error);
-//             request.status(500).json({ message: "Internal server Error" });
-//         }
-//     },
+            // Broadcast the summarized questions to everyone in the room
+            const io = request.app.get("io");
+            io.to(code).emit("top-questions-generated", topQuestions);
+            // --- END OF ASSIGNMENT LOGIC ---
 
-// };
-
-
-// module.exports = roomController;
-
-
-const Room = require("../models/Rooms");
-const Question = require("../models/Questions");
-
-// Create Room
-exports.createRoom = async (req, res) => {
-  try {
-    const { name } = req.body;
-    const room = new Room({ name, user: req.user._id });
-    await room.save();
-    res.status(201).json(room);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+            response.status(200).json({ message: "Summary generated and broadcasted to all participants." });
+        } catch (error) {
+            console.log(error);
+            response.status(500).json({
+                message: 'Internal server error during summary generation.'
+            });
+        }
+    }
 };
 
-// Get User Rooms
-exports.getRooms = async (req, res) => {
-  try {
-    const rooms = await Room.find({ user: req.user._id });
-    res.status(200).json(rooms);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// Add Question to Room
-exports.addQuestion = async (req, res) => {
-  try {
-    const { roomId } = req.params;
-    const { questionText } = req.body;
-    const room = await Room.findOne({ _id: roomId, user: req.user._id });
-    if (!room) return res.status(404).json({ message: "Room not found" });
-
-    const question = new Question({ questionText, room: roomId, user: req.user._id });
-    await question.save();
-    res.status(201).json(question);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// Get Questions in Room
-exports.getQuestions = async (req, res) => {
-  try {
-    const { roomId } = req.params;
-    const questions = await Question.find({ room: roomId, user: req.user._id });
-    res.status(200).json(questions);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-//delete room
-exports.deleteRoom = async (req, res) => {
-  try {
-    const { roomId } = req.params;
-    const room = await Room.findOneAndDelete({ _id: roomId, user: req.user._id });
-    if (!room) return res.status(404).json({ message: "Room not found or unauthorized" });
-
-    await Question.deleteMany({ room: roomId, user: req.user._id }); // delete related questions
-    res.status(200).json({ message: "Room and its questions deleted" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-//delete question
-exports.deleteQuestion = async (req, res) => {
-  try {
-    const { questionId } = req.params;
-    const question = await Question.findOneAndDelete({ _id: questionId, user: req.user._id });
-    if (!question) return res.status(404).json({ message: "Question not found or unauthorized" });
-
-    res.status(200).json({ message: "Question deleted" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
+module.exports = roomController;
